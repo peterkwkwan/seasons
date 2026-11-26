@@ -1,88 +1,68 @@
-/** Phase 5 Path C types for the thin practitioner portal. */
+/** Clinic-nav dual-track portal types (demo / pilot). */
 
-export type ClinicalSpecialty =
-  | 'menopause_aware_gp'
-  | 'gynae_endocrine'
-  | 'sleep_mood'
-  | 'bone_heart_risk';
+export type Track = 'partner' | 'contracted';
 
-export interface Clinic {
-  id: string;
-  specialty: ClinicalSpecialty;
-  name: string;
-  district: string;
-  address_line: string;
-}
+export type PathwayStatus =
+  | 'invited'
+  | 'intake'
+  | 'nurture'
+  | 'clinic_ready'
+  | 'handed_off'
+  | 'gp_matched'
+  | 'visit_booked'
+  | 'plan_ready'
+  | 'follow_up_booked';
 
-export interface PractitionerProfile {
-  id: string;
-  email: string | null;
-  display_name: string | null;
-  role: string;
-  clinic_id: string | null;
-}
-
-export interface LabRow {
-  name: string;
-  value: number | string | null;
-  unit: string | null;
-  ref_range: string | null;
-  flag: 'H' | 'L' | null;
-  sort_order?: number;
-}
-
-export interface SummaryPack {
-  id: string;
-  kind: 'clinical' | 'upsell';
-  session_id: string;
-  clinical_booking_id: string | null;
-  clinic_id: string | null;
-  path_tag: string;
-  disclaimer: string;
-  goals: {
-    primary_goal?: string;
-    /** Selected symptom chip labels from Path A multi-select. */
-    symptoms?: string[];
-    answers?: Record<string, string>;
-  };
-  spend_buckets: string[];
-  match_reason: string | null;
-  flagged_labs: LabRow[];
-  labs: LabRow[];
-  lab_document_id: string | null;
-  storage_path: string | null;
-  original_filename: string | null;
-  patient_email: string | null;
-  patient_display_name: string | null;
-  slot_starts_at: string | null;
-  specialty: ClinicalSpecialty | null;
-  created_at: string;
-}
-
-export interface UpcomingAppointment {
-  bookingId: string;
-  specialty: ClinicalSpecialty;
-  whyCopy: string;
-  bookedAt: string;
-  slotStartsAt: string | null;
-  slotEndsAt: string | null;
-  packId: string | null;
-  patientEmail: string | null;
-  patientDisplayName: string | null;
-}
-
-export const SPECIALTY_LABELS: Record<ClinicalSpecialty, string> = {
-  menopause_aware_gp: 'Menopause-aware GP',
-  gynae_endocrine: 'Gynae / endocrine',
-  sleep_mood: 'Sleep / mood',
-  bone_heart_risk: 'Bone / heart risk',
+export type IntakeAnswers = {
+  hotFlashes: 'mild' | 'moderate' | 'severe' | null;
+  sleep: 'ok' | 'disrupted' | 'severe' | null;
+  duration: 'under_3m' | '3_12m' | 'over_12m' | null;
+  priorCare: 'none' | 'gp' | 'specialist' | null;
+  notes: string;
 };
 
-export const SPEND_LABELS: Record<string, string> = {
-  skincare_aesthetics: 'Skincare / aesthetics',
-  gym_physio: 'Gym / physio',
-  supplements: 'Supplements',
-  wellness_spa: 'Wellness / spa',
-  mental_health: 'Mental health',
-  private_gp: 'Private GP',
+export type DemoSession = {
+  displayName: string;
+  employer: string;
+  email: string;
+  inviteToken: string;
+  track: Track;
+  pathwayStatus: PathwayStatus;
+  intake: IntakeAnswers;
+  intakeStep: number;
+  criteriaMet: boolean | null;
+  refId: string | null;
+  handoffAt: string | null;
+  bookedConfirmed: boolean;
+  visitId: string | null;
+  visitSlotLabel: string | null;
+  followUpSlot: string | null;
+  /** When true, second intake pass on partner track yields clinic-ready. */
+  reIntake: boolean;
+};
+
+export const INTAKE_STEP_COUNT = 5;
+
+export const DEFAULT_INTAKE: IntakeAnswers = {
+  hotFlashes: null,
+  sleep: null,
+  duration: null,
+  priorCare: null,
+  notes: '',
+};
+
+export type GpProfile = {
+  id: string;
+  initials: string;
+  name: string;
+  blurb: string;
+  tags: string[];
+  nextSlot: string;
+  followUpSlots: string[];
+};
+
+export type ClinicHandoff = {
+  name: string;
+  waNumber: string;
+  email: string;
 };

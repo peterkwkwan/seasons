@@ -1,7 +1,7 @@
 # femm
 
 Hong Kong menopause **care-navigation** prototype (not a diagnosis).  
-Stack lock: **Flutter Android** user client · **thin web** practitioner portal · **Supabase** (Auth + Postgres + Storage) · **Google Auth** for users and practitioners.
+Stack lock: **Flutter Android** user client · **thin web** clinic-nav portal · **Supabase** (Auth + Postgres + Storage) · **Google Auth** for users (portal pilot uses a demo invite click-through).
 
 Phase 0.5 cut Firebase over to Supabase free tier. **Phase 1** seeded supply + synthetic PDF. **Phase 2** PDF upload → extract → confirm. **Phase 3** spend multi-select + symptoms chips + match gate (step counter Spend / Symptoms / Match). **Phase 4** rule-based match + 15-min hold + same-bucket upsell. **Phase 5** Path C summary packs + practitioner portal. **Phase 6** demo script, hold edge-case hardening, disclaimer audit, Android smoke notes, deferral checklist.
 
@@ -10,7 +10,7 @@ Phase 0.5 cut Firebase over to Supabase free tier. **Phase 1** seeded supply + s
 | Path | Role |
 | --- | --- |
 | `apps/mobile` | Flutter Android user app (`supabase_flutter`) |
-| `apps/portal` | Vite + TypeScript practitioner portal (`@supabase/supabase-js`) |
+| `apps/portal` | Vite + TypeScript clinic-nav patient portal (dual-track invite → intake → partner handoff or GP tele) |
 | `supabase/migrations` | Postgres schema + RLS (`profiles`, clinics/slots/upsell, lab docs, match/bookings, Path C `summary_packs`, `lab-pdfs`) |
 | `supabase/functions` | Edge Functions (`extract-lab-pdf`) |
 | `supabase/seed` | Idempotent Phase 1 demo supply reset SQL |
@@ -82,18 +82,17 @@ flutter run --dart-define-from-file=dart_defines.json
 Scaffold boots with placeholder URL/anon key (sign-in fails until you wire a real project).  
 Sign-in upserts `public.profiles` for that auth uid (`role: user`).
 
-## Run — practitioner portal (`apps/portal`)
+## Run — clinic-nav portal (`apps/portal`)
 
 ```bash
 cd apps/portal
 npm install
-cp .env.example .env.local   # then edit VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY
 npm run dev
 ```
 
-Or from root: `npm run portal:dev`. Open `http://localhost:5173`.  
-Google Auth → claim a demo clinic → upcoming appointments → Path C summary / labs / PDF.  
-Smoke: **[`docs/phase5-path-c-portal.md`](./docs/phase5-path-c-portal.md)**.
+Or from root: `npm run portal:dev`. Open `http://localhost:5173` (`/invite/demo`).  
+Dual-track patient flow (employer invite → intake → partner clinic WhatsApp handoff **or** contracted GP tele + follow-up). Toggle with `?track=partner|contracted` or in-app settings. Demo session is local — Supabase `.env.local` optional.  
+Details: **[`apps/portal/README.md`](./apps/portal/README.md)**. Historical Path C practitioner pack notes remain in **[`docs/phase5-path-c-portal.md`](./docs/phase5-path-c-portal.md)** (UI removed from the portal).
 
 ## Phase 0.5 acceptance
 

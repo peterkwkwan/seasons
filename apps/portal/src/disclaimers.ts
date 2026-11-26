@@ -1,10 +1,16 @@
-/** Shared Path C / portal disclaimer copy (Phase 6 audit). */
-export const PATH_C_DISCLAIMER =
-  'Care-navigation only — not a diagnosis or medical advice.';
+/** Care-navigation disclaimer (clinic-nav pilot). */
+export const CARE_NAV_DISCLAIMER =
+  'Care navigation · not a diagnosis';
 
-export const PORTAL_NOTE = 'Hong Kong prototype · English UI · not a diagnosis';
+export const PORTAL_NOTE =
+  'Hong Kong pilot · English UI · employer invite only';
+
+export const INTAKE_CONSENT =
+  'By continuing you agree to share intake with seasons and partner clinics in this pilot.';
 
 export function assertsNotDiagnosis(copy: string): boolean {
   const lower = copy.toLowerCase();
-  return lower.includes('not a diagnosis') || lower.includes('care-navigation');
+  return (
+    lower.includes('not a diagnosis') || lower.includes('care navigation')
+  );
 }

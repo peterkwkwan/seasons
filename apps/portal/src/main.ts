@@ -1,680 +1,450 @@
-import type { User } from '@supabase/supabase-js';
-
 import './style.css';
-import { PATH_C_DISCLAIMER, PORTAL_NOTE } from './disclaimers';
-import { formatError } from './formatError';
+import { loadSession, resetSession, saveSession } from './demo';
 import {
-  claimDemoClinic,
-  downloadLabPdf,
-  fetchClinic,
-  fetchOwnProfile,
-  fetchSummaryPack,
-  listClinics,
-  listUpcomingAppointments,
-  signInWithGoogle,
-  signOutUser,
-  upsertOwnProfile,
-  usingPlaceholders,
-  watchAuth,
-} from './supabase';
-import {
-  SPECIALTY_LABELS,
-  SPEND_LABELS,
-  type Clinic,
-  type LabRow,
-  type PractitionerProfile,
-  type SummaryPack,
-  type UpcomingAppointment,
+  DEFAULT_INTAKE,
+  INTAKE_STEP_COUNT,
+  type DemoSession,
+  type Track,
 } from './types';
+import { navigate, parseRoute, type Route } from './router';
+import {
+  DEMO_CLINIC,
+  DEMO_GP,
+  bindChrome,
+  evaluatePartnerCriteria,
+  logClinicEmailStub,
+  mintRefId,
+  renderCriteriaNo,
+  renderFollowUp,
+  renderFollowUpDone,
+  renderGpMatch,
+  renderHandoff,
+  renderHomeGp,
+  renderHomeHandedOff,
+  renderHomeNurture,
+  renderIntake,
+  renderInvite,
+  renderPdfPreview,
+  renderPlan,
+  renderPreconsult,
+  renderSettings,
+  renderTeleVisit,
+  whatsAppHandoffUrl,
+} from './screens';
 
 const app = document.querySelector<HTMLDivElement>('#app');
-if (!app) {
-  throw new Error('#app root missing');
+if (!app) throw new Error('#app root missing');
+
+let session: DemoSession = loadSession();
+
+function persist(): void {
+  saveSession(session);
 }
 
-type View =
-  | { name: 'signed-out'; error?: string }
-  | { name: 'loading'; message: string }
-  | {
-      /** Session ok but profile/clinic bootstrap failed — stay signed in. */
-      name: 'session-error';
-      email: string | null;
-      uid: string;
-      error: string;
-    }
-  | {
-      name: 'claim-clinic';
-      profile: PractitionerProfile;
-      clinics: Clinic[];
-      error?: string;
-    }
-  | {
-      name: 'appointments';
-      profile: PractitionerProfile;
-      clinic: Clinic;
-      appointments: UpcomingAppointment[];
-      error?: string;
-    }
-  | {
-      name: 'pack';
-      profile: PractitionerProfile;
-      clinic: Clinic;
-      pack: SummaryPack;
-      labsExpanded: boolean;
-      error?: string;
+function setTrack(track: Track): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set('track', track);
+  history.replaceState(null, '', url.pathname + url.search);
+  session = resetSession(track);
+  persist();
+  navigate({ name: 'invite', token: session.inviteToken }, true);
+}
+
+function goHome(): void {
+  navigate({ name: 'home' });
+}
+
+function paint(): void {
+  const route = parseRoute();
+  app!.innerHTML = htmlFor(route);
+  wire(route);
+}
+
+function htmlFor(route: Route): string {
+  switch (route.name) {
+    case 'invite':
+      return renderInvite(session);
+    case 'intake':
+      return renderIntake(session);
+    case 'pathway-result':
+      return renderCriteriaNo(session);
+    case 'home':
+      if (session.track === 'contracted') return renderHomeGp(session);
+      if (session.pathwayStatus === 'handed_off') {
+        return renderHomeHandedOff(session);
+      }
+      if (
+        session.pathwayStatus === 'clinic_ready' &&
+        session.refId &&
+        !session.handoffAt
+      ) {
+        return renderPreconsult(session);
+      }
+      return renderHomeNurture(session);
+    case 'preconsult':
+      return renderPreconsult(session);
+    case 'handoff':
+      return renderHandoff(session);
+    case 'gp-match':
+      return renderGpMatch(session);
+    case 'visit':
+      return renderTeleVisit(session);
+    case 'plan':
+      return renderPlan(session);
+    case 'follow-up':
+      if (session.pathwayStatus === 'follow_up_booked') {
+        return renderFollowUpDone(session);
+      }
+      return renderFollowUp(session);
+    case 'settings':
+      return renderSettings(session);
+    case 'pdf-preview':
+      return renderPdfPreview(session);
+  }
+}
+
+function wire(route: Route): void {
+  bindChrome(app!, () => navigate({ name: 'settings' }));
+
+  if (route.name === 'invite') {
+    app!.querySelector('#invite-continue')?.addEventListener('click', () => {
+      session.pathwayStatus = 'intake';
+      session.intakeStep = 0;
+      persist();
+      navigate({ name: 'intake' });
+    });
+    return;
+  }
+
+  if (route.name === 'intake') {
+    wireIntake();
+    return;
+  }
+
+  if (route.name === 'pathway-result') {
+    app!.querySelector('#open-home')?.addEventListener('click', goHome);
+    app!.querySelector('#update-symptoms')?.addEventListener('click', () => {
+      startReIntake();
+    });
+    return;
+  }
+
+  if (route.name === 'home') {
+    app!.querySelector('#update-symptoms')?.addEventListener('click', () => {
+      startReIntake();
+    });
+    app!.querySelector('#wa-reopen')?.addEventListener('click', () => {
+      openWhatsApp();
+    });
+    app!.querySelector('#confirm-booked')?.addEventListener('click', () => {
+      session.bookedConfirmed = true;
+      persist();
+      paint();
+    });
+    app!.querySelector('#open-visit')?.addEventListener('click', () => {
+      navigate({
+        name: 'visit',
+        id: session.visitId ?? 'demo-visit',
+      });
+    });
+    app!.querySelector('#open-plan')?.addEventListener('click', () => {
+      navigate({
+        name: 'plan',
+        visitId: session.visitId ?? 'demo-visit',
+      });
+    });
+    app!.querySelector('#book-tele')?.addEventListener('click', bookTele);
+    return;
+  }
+
+  if (route.name === 'preconsult') {
+    app!.querySelector('#to-handoff')?.addEventListener('click', () => {
+      navigate({ name: 'handoff' });
+    });
+    app!.querySelector('#preview-pdf')?.addEventListener('click', () => {
+      navigate({ name: 'pdf-preview' });
+    });
+    return;
+  }
+
+  if (route.name === 'handoff') {
+    app!.querySelector('#wa-handoff')?.addEventListener('click', () => {
+      ensureRef();
+      logClinicEmailStub({
+        to: DEMO_CLINIC.email,
+        subject: `seasons pre-consult · ${session.refId}`,
+        refId: session.refId!,
+      });
+      openWhatsApp();
+      session.pathwayStatus = 'handed_off';
+      session.handoffAt = new Date().toISOString();
+      persist();
+      navigate({ name: 'home' });
+    });
+    return;
+  }
+
+  if (route.name === 'gp-match') {
+    app!.querySelector('#book-tele')?.addEventListener('click', bookTele);
+    return;
+  }
+
+  if (route.name === 'visit') {
+    app!.querySelector('#join-visit')?.addEventListener('click', () => {
+      // Demo: joining completes the visit and reveals the plan.
+      session.pathwayStatus = 'plan_ready';
+      persist();
+      navigate({
+        name: 'plan',
+        visitId: session.visitId ?? 'demo-visit',
+      });
+    });
+    app!.querySelector('#reschedule')?.addEventListener('click', () => {
+      navigate({ name: 'gp-match' });
+    });
+    return;
+  }
+
+  if (route.name === 'plan') {
+    app!.querySelector('#book-followup')?.addEventListener('click', () => {
+      navigate({ name: 'follow-up' });
+    });
+    app!.querySelector('#view-physio')?.addEventListener('click', () => {
+      window.alert(
+        'Demo stub: physio panel handoff would open here (WA / partner link).',
+      );
+    });
+    return;
+  }
+
+  if (route.name === 'follow-up') {
+    app!.querySelectorAll('[data-slot]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const slot = (el as HTMLElement).dataset.slot;
+        if (!slot) return;
+        session.followUpSlot = slot;
+        persist();
+        paint();
+      });
+    });
+    app!.querySelector('#confirm-followup')?.addEventListener('click', () => {
+      if (!session.followUpSlot) return;
+      session.pathwayStatus = 'follow_up_booked';
+      persist();
+      paint();
+    });
+    app!.querySelector('#open-home')?.addEventListener('click', goHome);
+    return;
+  }
+
+  if (route.name === 'pdf-preview') {
+    app!.querySelector('#close-pdf')?.addEventListener('click', () => {
+      navigate({ name: 'preconsult' });
+    });
+    return;
+  }
+
+  if (route.name === 'settings') {
+    const back = () => {
+      history.back();
+      // If no history, land sensibly.
+      setTimeout(() => {
+        if (parseRoute().name === 'settings') {
+          navigate(
+            { name: 'invite', token: session.inviteToken },
+            true,
+          );
+        }
+      }, 0);
     };
-
-let view: View = { name: 'signed-out' };
-let profileSyncing = false;
-let currentUserId: string | null = null;
-
-function esc(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
-
-function formatWhen(iso: string | null): string {
-  if (!iso) return 'Time TBD';
-  try {
-    return new Intl.DateTimeFormat('en-HK', {
-      timeZone: 'Asia/Hong_Kong',
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(new Date(iso));
-  } catch {
-    return iso;
+    app!.querySelector('#settings-back')?.addEventListener('click', back);
+    app!.querySelector('#settings-back-2')?.addEventListener('click', () => {
+      resumeFlow();
+    });
+    app!.querySelectorAll('[data-track]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const t = (el as HTMLElement).dataset.track as Track;
+        setTrack(t);
+      });
+    });
+    app!.querySelector('#reset-demo')?.addEventListener('click', () => {
+      session = resetSession(session.track);
+      persist();
+      navigate({ name: 'invite', token: 'demo' }, true);
+    });
   }
 }
 
-function formatLabValue(row: LabRow): string {
-  const parts: string[] = [];
-  if (row.value !== null && row.value !== undefined && row.value !== '') {
-    parts.push(String(row.value));
-  }
-  if (row.unit) parts.push(row.unit);
-  return parts.join(' ') || '—';
+function wireIntake(): void {
+  const step = session.intakeStep;
+  app!.querySelectorAll('[data-opt]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const value = (el as HTMLElement).dataset.opt;
+      if (!value) return;
+      const keys = [
+        'hotFlashes',
+        'sleep',
+        'duration',
+        'priorCare',
+      ] as const;
+      const key = keys[step];
+      if (!key) return;
+      session.intake = { ...session.intake, [key]: value };
+      persist();
+      paint();
+    });
+  });
+
+  app!.querySelector('#intake-back')?.addEventListener('click', () => {
+    session.intakeStep = Math.max(0, session.intakeStep - 1);
+    persist();
+    paint();
+  });
+
+  app!.querySelector('#intake-next')?.addEventListener('click', () => {
+    const notes = app!.querySelector<HTMLTextAreaElement>('#intake-notes');
+    if (notes) {
+      session.intake = { ...session.intake, notes: notes.value };
+    }
+
+    if (session.intakeStep < INTAKE_STEP_COUNT - 1) {
+      const keys = [
+        'hotFlashes',
+        'sleep',
+        'duration',
+        'priorCare',
+      ] as const;
+      const key = keys[session.intakeStep];
+      if (key && !session.intake[key]) {
+        // Soft default for click-through: pick moderate / disrupted / 3–12m / none
+        const defaults = {
+          hotFlashes: 'moderate',
+          sleep: 'disrupted',
+          duration: '3_12m',
+          priorCare: 'none',
+        } as const;
+        session.intake = {
+          ...session.intake,
+          [key]: defaults[key],
+        };
+      }
+      session.intakeStep += 1;
+      persist();
+      paint();
+      return;
+    }
+
+    finishIntake();
+  });
 }
 
-function render(): void {
-  switch (view.name) {
-    case 'signed-out':
-      renderSignedOut(view.error);
+function startReIntake(): void {
+  session.reIntake = true;
+  session.intakeStep = 0;
+  session.intake = { ...DEFAULT_INTAKE };
+  session.pathwayStatus = 'intake';
+  persist();
+  navigate({ name: 'intake' });
+}
+
+function finishIntake(): void {
+  if (session.track === 'contracted') {
+    session.pathwayStatus = 'gp_matched';
+    session.criteriaMet = null;
+    persist();
+    navigate({ name: 'gp-match' });
+    return;
+  }
+
+  const met = evaluatePartnerCriteria(session);
+  session.criteriaMet = met;
+  if (met) {
+    ensureRef();
+    session.pathwayStatus = 'clinic_ready';
+    persist();
+    navigate({ name: 'preconsult' });
+  } else {
+    session.pathwayStatus = 'nurture';
+    persist();
+    navigate({ name: 'pathway-result' });
+  }
+}
+
+function ensureRef(): void {
+  if (!session.refId) {
+    session.refId = mintRefId();
+    persist();
+  }
+}
+
+function openWhatsApp(): void {
+  ensureRef();
+  const url = whatsAppHandoffUrl(session.refId!);
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+function bookTele(): void {
+  session.visitId = 'demo-visit';
+  session.visitSlotLabel = DEMO_GP.nextSlot;
+  session.pathwayStatus = 'visit_booked';
+  persist();
+  navigate({ name: 'visit', id: 'demo-visit' });
+}
+
+function resumeFlow(): void {
+  switch (session.pathwayStatus) {
+    case 'invited':
+      navigate({ name: 'invite', token: session.inviteToken }, true);
       break;
-    case 'loading':
-      app!.innerHTML = `
-        <main class="shell shell-wide">
-          <p class="brand">femm</p>
-          <p class="lede">${esc(view.message)}</p>
-        </main>`;
+    case 'intake':
+      navigate({ name: 'intake' }, true);
       break;
-    case 'session-error':
-      renderSessionError(view.email, view.uid, view.error);
+    case 'nurture':
+      navigate({ name: 'home' }, true);
       break;
-    case 'claim-clinic':
-      renderClaimClinic(view.profile, view.clinics, view.error);
+    case 'clinic_ready':
+      navigate({ name: 'preconsult' }, true);
       break;
-    case 'appointments':
-      renderAppointments(
-        view.profile,
-        view.clinic,
-        view.appointments,
-        view.error,
+    case 'handed_off':
+      navigate({ name: 'home' }, true);
+      break;
+    case 'gp_matched':
+      navigate({ name: 'gp-match' }, true);
+      break;
+    case 'visit_booked':
+      navigate({ name: 'visit', id: session.visitId ?? 'demo-visit' }, true);
+      break;
+    case 'plan_ready':
+      navigate(
+        { name: 'plan', visitId: session.visitId ?? 'demo-visit' },
+        true,
       );
       break;
-    case 'pack':
-      renderPack(view.profile, view.clinic, view.pack, view.labsExpanded, view.error);
+    case 'follow_up_booked':
+      navigate({ name: 'home' }, true);
       break;
+    default:
+      navigate({ name: 'invite', token: 'demo' }, true);
   }
 }
 
-function renderSignedOut(error?: string): void {
-  app!.innerHTML = `
-    <main class="shell">
-      <p class="brand">femm</p>
-      <h1>Practitioner portal</h1>
-      <p class="lede">Path C pre-visit packs for booked appointments. Google Auth via Supabase.</p>
-      <p class="note">${esc(PORTAL_NOTE)}</p>
-      ${
-        usingPlaceholders
-          ? '<p class="note">Placeholders active — copy <code>.env.example</code> → <code>.env.local</code> with your project URL + anon key.</p>'
-          : ''
-      }
-      ${error ? `<p class="error">${esc(error)}</p>` : ''}
-      <div class="actions">
-        <button type="button" id="google-signin">Sign in with Google</button>
-      </div>
-    </main>
-  `;
-  document
-    .querySelector('#google-signin')
-    ?.addEventListener('click', () => void onGoogle());
-}
-
-function renderSessionError(
-  email: string | null,
-  uid: string,
-  error: string,
-): void {
-  app!.innerHTML = `
-    <main class="shell shell-wide">
-      <header class="top">
-        <div>
-          <p class="brand">femm</p>
-          <h1>Signed in — setup incomplete</h1>
-        </div>
-        <button type="button" class="secondary" id="signout">Sign out</button>
-      </header>
-      <p class="lede">Google Auth succeeded, but the portal could not load your practitioner profile or clinic.</p>
-      <p class="error">${esc(error)}</p>
-      <dl class="meta">
-        <dt>UID</dt><dd>${esc(uid)}</dd>
-        <dt>Email</dt><dd>${esc(email ?? '(none)')}</dd>
-      </dl>
-      <p class="note">Check Phase 5 migration (<code>profiles.clinic_id</code>), <code>apps/portal/.env.local</code>, and Supabase Auth Site URL / redirect allow list for <code>http://localhost:5173</code>.</p>
-      <div class="actions">
-        <button type="button" id="retry-bootstrap">Retry</button>
-      </div>
-    </main>
-  `;
-  document
-    .querySelector('#signout')
-    ?.addEventListener('click', () => void onSignOut());
-  document
-    .querySelector('#retry-bootstrap')
-    ?.addEventListener('click', () => void retryBootstrap());
-}
-
-function renderClaimClinic(
-  profile: PractitionerProfile,
-  clinics: Clinic[],
-  error?: string,
-): void {
-  const options = clinics
-    .map(
-      (c) => `
-      <li>
-        <button type="button" class="clinic-claim" data-clinic-id="${esc(c.id)}">
-          <span class="clinic-name">${esc(c.name)}</span>
-          <span class="clinic-meta">${esc(SPECIALTY_LABELS[c.specialty])} · ${esc(c.district)}</span>
-        </button>
-      </li>`,
-    )
-    .join('');
-
-  app!.innerHTML = `
-    <main class="shell shell-wide">
-      <header class="top">
-        <div>
-          <p class="brand">femm</p>
-          <h1>Claim a demo clinic</h1>
-        </div>
-        <button type="button" class="secondary" id="signout">Sign out</button>
-      </header>
-      <p class="lede">Link this Google account to one fictional Phase 1 clinic. You will only see Path C packs for bookings at that clinic.</p>
-      <p class="note">Signed in as ${esc(profile.email ?? profile.id)}</p>
-      ${error ? `<p class="error">${esc(error)}</p>` : ''}
-      <ul class="clinic-list">${options || '<li class="note">No clinics — run Phase 1 seed.</li>'}</ul>
-      <p class="disclaimer sticky">${esc(PATH_C_DISCLAIMER)}</p>
-    </main>
-  `;
-
-  document
-    .querySelector('#signout')
-    ?.addEventListener('click', () => void onSignOut());
-  document.querySelectorAll('.clinic-claim').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const id = (btn as HTMLButtonElement).dataset.clinicId;
-      if (id) void onClaimClinic(id);
-    });
-  });
-}
-
-function renderAppointments(
-  profile: PractitionerProfile,
-  clinic: Clinic,
-  appointments: UpcomingAppointment[],
-  error?: string,
-): void {
-  const rows = appointments
-    .map((a) => {
-      const who =
-        a.patientDisplayName || a.patientEmail || 'Patient';
-      const openDisabled = a.packId ? '' : 'disabled';
-      return `
-      <li class="appt">
-        <div class="appt-main">
-          <p class="appt-when">${esc(formatWhen(a.slotStartsAt))}</p>
-          <p class="appt-who">${esc(who)}</p>
-          <p class="appt-meta">${esc(SPECIALTY_LABELS[a.specialty])}</p>
-        </div>
-        <button type="button" class="open-pack" data-pack-id="${esc(a.packId ?? '')}" ${openDisabled}>
-          Open summary
-        </button>
-      </li>`;
-    })
-    .join('');
-
-  app!.innerHTML = `
-    <main class="shell shell-wide">
-      <header class="top">
-        <div>
-          <p class="brand">femm</p>
-          <h1>Upcoming appointments</h1>
-        </div>
-        <button type="button" class="secondary" id="signout">Sign out</button>
-      </header>
-      <p class="lede">${esc(clinic.name)} · ${esc(clinic.district)}</p>
-      <p class="note">${esc(profile.email ?? '')} · booked practitioners only</p>
-      ${error ? `<p class="error">${esc(error)}</p>` : ''}
-      <ul class="appt-list">
-        ${
-          rows ||
-          '<li class="note empty">No clinical bookings for this clinic yet. Complete Path A confirm in the Flutter app.</li>'
-        }
-      </ul>
-      <p class="disclaimer sticky">${esc(PATH_C_DISCLAIMER)}</p>
-    </main>
-  `;
-
-  document
-    .querySelector('#signout')
-    ?.addEventListener('click', () => void onSignOut());
-  document.querySelectorAll('.open-pack').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const packId = (btn as HTMLButtonElement).dataset.packId;
-      if (packId) void onOpenPack(packId);
-    });
-  });
-}
-
-function renderPack(
-  profile: PractitionerProfile,
-  clinic: Clinic,
-  pack: SummaryPack,
-  labsExpanded: boolean,
-  error?: string,
-): void {
-  const primaryGoal = pack.goals.primary_goal?.trim() || '—';
-  const symptoms = (pack.goals.symptoms ?? []).filter(
-    (s) => typeof s === 'string' && s.trim().length > 0,
-  );
-  const answers = pack.goals.answers ?? {};
-  const symptomRows = symptoms
-    .map((s) => `<li>${esc(s)}</li>`)
-    .join('');
-  // Prefer symptoms list; fall back to raw answer map (legacy ≤8 Q rows).
-  const answerRows =
-    symptomRows ||
-    Object.entries(answers)
-      .filter(([k]) => k !== 'primary_goal')
-      .map(
-        ([k, v]) =>
-          `<li><span class="k">${esc(k)}</span> <span class="v">${esc(v)}</span></li>`,
-      )
-      .join('');
-
-  const spend = (pack.spend_buckets ?? [])
-    .map((b) => SPEND_LABELS[b] ?? b)
-    .map((label) => `<li>${esc(label)}</li>`)
-    .join('');
-
-  const flagged = (pack.flagged_labs ?? [])
-    .map(
-      (row) => `
-      <tr>
-        <td>${esc(row.name)}</td>
-        <td>${esc(formatLabValue(row))}</td>
-        <td>${esc(row.ref_range ?? '—')}</td>
-        <td class="flag">${esc(row.flag ?? '')}</td>
-      </tr>`,
-    )
-    .join('');
-
-  const fullLabs = (pack.labs ?? [])
-    .map(
-      (row) => `
-      <tr>
-        <td>${esc(row.name)}</td>
-        <td>${esc(formatLabValue(row))}</td>
-        <td>${esc(row.ref_range ?? '—')}</td>
-        <td class="flag">${esc(row.flag ?? '')}</td>
-      </tr>`,
-    )
-    .join('');
-
-  const patient =
-    pack.patient_display_name || pack.patient_email || 'Patient';
-
-  app!.innerHTML = `
-    <main class="shell shell-wide">
-      <header class="top">
-        <div>
-          <p class="brand">femm</p>
-          <h1>Path C summary</h1>
-        </div>
-        <div class="actions-inline">
-          <button type="button" class="secondary" id="back-list">Back</button>
-          <button type="button" class="secondary" id="signout">Sign out</button>
-        </div>
-      </header>
-
-      <p class="path-tag">${esc(pack.path_tag)}</p>
-      <p class="lede">${esc(patient)} · ${esc(formatWhen(pack.slot_starts_at))} · ${esc(clinic.name)}</p>
-      ${error ? `<p class="error">${esc(error)}</p>` : ''}
-
-      <section class="pack-block">
-        <h2>Goals / symptoms</h2>
-        <p class="primary-goal">${esc(primaryGoal)}</p>
-        ${
-          answerRows
-            ? `<ul class="${symptoms.length ? 'plain-list' : 'kv-list'}">${answerRows}</ul>`
-            : ''
-        }
-      </section>
-
-      <section class="pack-block">
-        <h2>Spend</h2>
-        <ul class="plain-list">${spend || '<li>—</li>'}</ul>
-      </section>
-
-      <section class="pack-block">
-        <h2>Why this match</h2>
-        <p>${esc(pack.match_reason ?? '—')}</p>
-      </section>
-
-      <section class="pack-block">
-        <h2>Flagged labs</h2>
-        <p class="note">H/L vs ref range only when present — no invented clinical meaning.</p>
-        <table class="labs">
-          <thead><tr><th>Name</th><th>Value</th><th>Ref</th><th>Flag</th></tr></thead>
-          <tbody>
-            ${flagged || '<tr><td colspan="4">No flagged rows</td></tr>'}
-          </tbody>
-        </table>
-      </section>
-
-      <section class="pack-block">
-        <div class="expand-row">
-          <h2>Full labs</h2>
-          <button type="button" class="secondary" id="toggle-labs">
-            ${labsExpanded ? 'Collapse' : 'Expand'}
-          </button>
-        </div>
-        ${
-          labsExpanded
-            ? `<table class="labs">
-                <thead><tr><th>Name</th><th>Value</th><th>Ref</th><th>Flag</th></tr></thead>
-                <tbody>
-                  ${fullLabs || '<tr><td colspan="4">No lab rows</td></tr>'}
-                </tbody>
-              </table>`
-            : '<p class="note">Collapsed — expand to review the confirmed biomarker table.</p>'
-        }
-      </section>
-
-      <section class="pack-block">
-        <h2>Original PDF</h2>
-        <p class="note">${esc(pack.original_filename ?? pack.storage_path ?? 'No file path on pack')}</p>
-        <div class="actions">
-          <button type="button" id="download-pdf" ${pack.storage_path ? '' : 'disabled'}>
-            Download original PDF
-          </button>
-        </div>
-      </section>
-
-      <p class="disclaimer sticky">${esc(pack.disclaimer || PATH_C_DISCLAIMER)}</p>
-      <p class="note">Signed in as ${esc(profile.email ?? profile.id)}</p>
-    </main>
-  `;
-
-  document
-    .querySelector('#signout')
-    ?.addEventListener('click', () => void onSignOut());
-  document.querySelector('#back-list')?.addEventListener('click', () => {
-    void loadPractitionerHome(profile);
-  });
-  document.querySelector('#toggle-labs')?.addEventListener('click', () => {
-    if (view.name !== 'pack') return;
-    view = { ...view, labsExpanded: !view.labsExpanded };
-    render();
-  });
-  document.querySelector('#download-pdf')?.addEventListener('click', () => {
-    void onDownloadPdf(pack);
-  });
-}
-
-let lastAuthUser: User | null = null;
-
-function showSessionError(
-  email: string | null,
-  uid: string,
-  err: unknown,
-): void {
-  view = {
-    name: 'session-error',
-    email,
-    uid,
-    error: formatError(err),
-  };
-  render();
-}
-
-async function retryBootstrap(): Promise<void> {
-  if (!lastAuthUser) {
-    view = {
-      name: 'signed-out',
-      error: 'Session lost — sign in again.',
-    };
-    render();
+function bootstrapRoute(): void {
+  const route = parseRoute();
+  // Fresh load at `/` → invite
+  if (
+    window.location.pathname === '/' ||
+    window.location.pathname === ''
+  ) {
+    navigate({ name: 'invite', token: 'demo' }, true);
     return;
   }
-  await bootstrapSignedIn(lastAuthUser);
+  // Keep invite token on session
+  if (route.name === 'invite') {
+    session.inviteToken = route.token;
+    persist();
+  }
+  paint();
 }
 
-async function bootstrapSignedIn(user: User): Promise<void> {
-  if (usingPlaceholders) {
-    view = {
-      name: 'signed-out',
-      error: 'Configure VITE_SUPABASE_* before signing in.',
-    };
-    render();
-    return;
-  }
-
-  profileSyncing = true;
-  view = { name: 'loading', message: 'Signing in…' };
-  render();
-
-  try {
-    const profile = await upsertOwnProfile(user);
-    await loadPractitionerHome(profile);
-  } catch (err) {
-    // Prefer claim UI when clinics are reachable (session ok, profile row flaky).
-    try {
-      const clinics = await listClinics();
-      const existing = await fetchOwnProfile(user.id).catch(() => null);
-      view = {
-        name: 'claim-clinic',
-        profile: existing ?? {
-          id: user.id,
-          email: user.email ?? null,
-          display_name:
-            (user.user_metadata?.full_name as string | undefined) ??
-            (user.user_metadata?.name as string | undefined) ??
-            null,
-          role: 'practitioner',
-          clinic_id: null,
-        },
-        clinics,
-        error: formatError(err),
-      };
-      render();
-    } catch {
-      showSessionError(user.email ?? null, user.id, err);
-    }
-  } finally {
-    profileSyncing = false;
-  }
-}
-
-async function onGoogle(): Promise<void> {
-  try {
-    await signInWithGoogle();
-  } catch (err) {
-    view = {
-      name: 'signed-out',
-      error: formatError(err),
-    };
-    render();
-  }
-}
-
-async function onSignOut(): Promise<void> {
-  try {
-    await signOutUser();
-  } catch (err) {
-    view = {
-      name: 'signed-out',
-      error: formatError(err),
-    };
-    render();
-  }
-}
-
-async function onClaimClinic(clinicId: string): Promise<void> {
-  view = { name: 'loading', message: 'Linking clinic…' };
-  render();
-  try {
-    await claimDemoClinic(clinicId);
-    if (!currentUserId) throw new Error('Not signed in');
-    const profile = await fetchOwnProfile(currentUserId);
-    if (!profile) throw new Error('Profile missing after claim');
-    await loadPractitionerHome(profile);
-  } catch (err) {
-    const clinics = await listClinics().catch(() => [] as Clinic[]);
-    const profile = currentUserId
-      ? await fetchOwnProfile(currentUserId).catch(() => null)
-      : null;
-    view = {
-      name: 'claim-clinic',
-      profile: profile ?? {
-        id: currentUserId ?? '',
-        email: lastAuthUser?.email ?? null,
-        display_name: null,
-        role: 'practitioner',
-        clinic_id: null,
-      },
-      clinics,
-      error: formatError(err),
-    };
-    render();
-  }
-}
-
-async function onOpenPack(packId: string): Promise<void> {
-  if (view.name !== 'appointments' && view.name !== 'pack') return;
-  const profile = view.profile;
-  const clinic = view.name === 'appointments' || view.name === 'pack'
-    ? view.clinic
-    : null;
-  if (!clinic) return;
-
-  view = { name: 'loading', message: 'Loading summary pack…' };
-  render();
-  try {
-    const pack = await fetchSummaryPack(packId);
-    view = {
-      name: 'pack',
-      profile,
-      clinic,
-      pack,
-      labsExpanded: false,
-    };
-    render();
-  } catch (err) {
-    await loadPractitionerHome(profile, formatError(err));
-  }
-}
-
-async function onDownloadPdf(pack: SummaryPack): Promise<void> {
-  if (!pack.storage_path || view.name !== 'pack') return;
-  try {
-    await downloadLabPdf(pack.storage_path, pack.original_filename);
-  } catch (err) {
-    view = {
-      ...view,
-      error: formatError(err),
-    };
-    render();
-  }
-}
-
-async function loadPractitionerHome(
-  profile: PractitionerProfile,
-  error?: string,
-): Promise<void> {
-  view = { name: 'loading', message: 'Loading appointments…' };
-  render();
-
-  try {
-    if (!profile.clinic_id) {
-      const clinics = await listClinics();
-      view = { name: 'claim-clinic', profile, clinics, error };
-      render();
-      return;
-    }
-
-    const clinic = await fetchClinic(profile.clinic_id);
-    if (!clinic) {
-      const clinics = await listClinics();
-      view = {
-        name: 'claim-clinic',
-        profile: { ...profile, clinic_id: null },
-        clinics,
-        error: 'Linked clinic missing — claim again after re-seeding.',
-      };
-      render();
-      return;
-    }
-
-    const appointments = await listUpcomingAppointments(clinic.id);
-    view = { name: 'appointments', profile, clinic, appointments, error };
-    render();
-  } catch (err) {
-    // Stay signed in — do not dump opaque objects onto the login page.
-    try {
-      const clinics = await listClinics();
-      view = {
-        name: 'claim-clinic',
-        profile: { ...profile, clinic_id: null },
-        clinics,
-        error: formatError(err),
-      };
-      render();
-    } catch {
-      showSessionError(profile.email, profile.id, err);
-    }
-  }
-}
-
-watchAuth((user) => {
-  lastAuthUser = user;
-  if (!user) {
-    currentUserId = null;
-    view = { name: 'signed-out' };
-    render();
-    return;
-  }
-
-  currentUserId = user.id;
-  if (profileSyncing) return;
-
-  void bootstrapSignedIn(user);
-});
+window.addEventListener('popstate', () => paint());
+bootstrapRoute();
