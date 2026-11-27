@@ -1,7 +1,11 @@
 import { defineConfig } from 'vite';
 
-/** SPA history fallback so deep links like /invite/demo work in preview. */
+/**
+ * Project Pages URL: https://peterkwkwan.github.io/seasons/portal/
+ * (repo renamed seasons; github.com/peterkwkwan/femm redirects there)
+ */
 export default defineConfig({
+  base: '/seasons/portal/',
   server: {
     port: 5173,
   },

@@ -4,6 +4,18 @@ Mobile-first Vite + TypeScript web app for the **dual-track clinic navigation** 
 
 Replaces the former Path C practitioner portal (claim clinic / appointments / summary packs). Petal Soft visual language: bg `#F8EFEA`, surface `#FFF9F6`, ink `#2A1F1C`, muted `#7A6560`, accent `#B85C5C`, Cormorant + Inter.
 
+## Live demo (GitHub Pages)
+
+Public URL (repo is **seasons**; `github.com/peterkwkwan/femm` redirects):
+
+**[https://peterkwkwan.github.io/seasons/portal/invite/demo](https://peterkwkwan.github.io/seasons/portal/invite/demo)**
+
+- Base path: `/seasons/portal/` (project Pages + portal subpath)
+- Deep links use the History API; `404.html` SPA fallback is deployed with the site
+- Deploys on push to `main` via `.github/workflows/deploy-portal-pages.yml`
+
+Toggle tracks with `?track=partner` or `?track=contracted` on the demo URL.
+
 ## Tracks
 
 | Track | Flow |
@@ -13,7 +25,7 @@ Replaces the former Path C practitioner portal (claim clinic / appointments / su
 
 Toggle with `?track=partner` or `?track=contracted`, or the in-app **Track A / Track B** control (top-right → settings).
 
-## Run
+## Run locally
 
 ```bash
 cd apps/portal
@@ -21,11 +33,22 @@ npm install
 npm run dev
 ```
 
-Or from repo root: `npm run portal:dev`. Open `http://localhost:5173` (lands on `/invite/demo`).
+Or from repo root: `npm run portal:dev`.
+
+With Vite `base: '/seasons/portal/'`, open:
+
+`http://localhost:5173/seasons/portal/` → lands on `/seasons/portal/invite/demo`.
 
 Demo session lives in `localStorage` — no Google auth required for the click-through. Optional `VITE_SUPABASE_*` in `.env.local` keeps the Supabase client available for later persistence; it is not required for the pilot UI.
 
+```bash
+npm run build    # tsc + vite build → dist/ with /seasons/portal/ asset paths
+npm run preview  # serve dist at the same base
+```
+
 ## Routes
+
+Logical paths (after stripping `/seasons/portal`):
 
 | Path | Screen |
 | --- | --- |
@@ -49,3 +72,4 @@ Demo session lives in `localStorage` — no Google auth required for the click-t
 - Video join is a demo advance into the after-visit plan (no real WebRTC vendor).
 - Physio referral is an alert stub.
 - Flutter mobile app is unchanged by this portal replace.
+- Pages host is static only — no Supabase env injected in the Actions build unless secrets are added later.

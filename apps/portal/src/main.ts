@@ -6,7 +6,7 @@ import {
   type DemoSession,
   type Track,
 } from './types';
-import { navigate, parseRoute, type Route } from './router';
+import { appBase, navigate, parseRoute, stripBase, type Route } from './router';
 import {
   DEMO_CLINIC,
   DEMO_GP,
@@ -430,10 +430,14 @@ function resumeFlow(): void {
 
 function bootstrapRoute(): void {
   const route = parseRoute();
-  // Fresh load at `/` → invite
+  const logical = stripBase(window.location.pathname);
+  const base = appBase();
+  // Fresh load at site root or `/seasons/portal/` → invite
   if (
-    window.location.pathname === '/' ||
-    window.location.pathname === ''
+    logical === '/' ||
+    logical === '' ||
+    window.location.pathname === base ||
+    window.location.pathname === `${base}/`
   ) {
     navigate({ name: 'invite', token: 'demo' }, true);
     return;

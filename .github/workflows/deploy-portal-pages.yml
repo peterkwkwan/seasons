@@ -1,0 +1,75 @@
+# Build apps/portal and deploy to GitHub Pages (project site).
+# Live demo: https://peterkwkwan.github.io/seasons/portal/invite/demo
+# Also re-publishes docs/privacy (Play Store URL) so Actions replace /docs branch source.
+
+name: Deploy portal Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/portal/**'
+      - 'docs/index.html'
+      - 'docs/privacy/**'
+      - '.github/workflows/deploy-portal-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/portal/package-lock.json
+
+      - name: Install
+        working-directory: apps/portal
+        run: npm ci
+
+      - name: Build
+        working-directory: apps/portal
+        run: npm run build
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p _site/portal _site/privacy
+          # Portal SPA under /portal/ (Vite base is /seasons/portal/)
+          cp -a apps/portal/dist/. _site/portal/
+          # SPA deep-link fallback: unknown paths serve the portal shell
+          cp apps/portal/dist/index.html _site/404.html
+          cp apps/portal/dist/index.html _site/portal/404.html
+          # Keep existing static Pages content (privacy + root redirect)
+          cp docs/index.html _site/index.html
+          cp -a docs/privacy/. _site/privacy/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
